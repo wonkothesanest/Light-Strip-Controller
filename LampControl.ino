@@ -58,11 +58,18 @@ enum LightModes {
 // This time we are only calling the solid colors because we don't have interrupts
 //    for the animations
 int light_mode_array[] = {
-  red, green, blue, white, off,
+  white, blue, red, green,
   nextcolor9, nextcolor9, nextcolor9,
   nextcolor9, nextcolor9, nextcolor9,
-  nextcolor9, nextcolor9, nextcolor9
+  nextcolor9, nextcolor9, nextcolor9,
+  off
 };
+
+Color color_green = Color(0x00, 0xFF, 0x00);
+Color color_red = Color(0xFF, 0x00, 0x00);
+Color color_blue = Color(0x00, 0x00, 0xFF);
+Color color_white = Color(0xFF, 0xFF, 0xFF);
+
 
 //initialize the index of the array so we can increment
 int light_mode_array_index = 0;
@@ -77,13 +84,12 @@ Bounce debouncer = Bounce();
 //Ultrasonic device initialization:
 Ultrasonic ultrasonic(pin_ult_trig, pin_ult_echo); //Ultrasonic ultrasonic(Trig,Echo);
 
-//Global dimness to be used by all static color functions
-double percent_dim = 1.0;
 
 //some holder to keep track of how long the button was pressed
 unsigned long button_down_pressed = 0;
 bool button_down = false;
 int BUTTON_HOLD_TIME = 500; //milliseconds
+bool did_catch_fade_adjust = false;
 
 
 //array of rgb color values for the next 9 color function
@@ -94,12 +100,23 @@ int BUTTON_HOLD_TIME = 500; //milliseconds
 //  256 is 2^8 which is where 8 bits to a byte comes from
 // Have fun and play with the colors
 Color next9ColorArray[9] = {
-                              Color(0xFF, 0x00, 0x00),Color(0xFF, 0xFF, 0x00),Color(0xFF, 0x00, 0x00),
-                              Color(0x00, 0xFF, 0x00),Color(0x00, 0xFF, 0xFF),Color(0x00, 0x00, 0x00),
-                              Color(0x00, 0x00, 0xFF),Color(0xFF, 0x00, 0xFF),Color(0x00, 0x00, 0x00)
+                              Color(0xFF, 0x80, 0x80),Color(0xFF, 0xFF, 0x00),Color(0xFF, 0x80, 0xFF),
+                              Color(0x80, 0xFF, 0x80),Color(0x00, 0xFF, 0xFF),Color(0x80, 0xFF, 0xFF),
+                              Color(0x80, 0x80, 0xFF),Color(0xFF, 0x00, 0xFF),Color(0xFF, 0xFF, 0x80)
                             };
 int nex9ColorArray_index = 0;
 
+//Smoothing parameters play with filterSamples size
+#define filterSamples   10
+
+// this determines smoothness  - .0001 is max  1 is off (no smoothing)
+float filterVal = 0.55;
+
+int ultraSmoothArray [filterSamples];
+int ultraPercentSmoothArray [filterSamples];
+float smoothed_percent_dim = 100.0;
+//Global dimness to be used by all static color functions
+double percent_dim = 1.0;
 
 void setup() {
   // Set up the transistors to be output for the lights
@@ -114,6 +131,7 @@ void setup() {
   // After setting up the button, setup the Bounce instance :
   debouncer.attach(pin_button);
   debouncer.interval(5); // interval in ms
+  triggerLightStateChange(false, true);
 }
 
 void loop() {
@@ -126,39 +144,86 @@ void loop() {
     button_down = true;
     button_down_pressed = millis();
     
-    triggerLightStateChange(true);
   }
 
   
   if(debouncer.rose()){
     button_down = false;
+    if(!did_catch_fade_adjust){
+      triggerLightStateChange(true, true);
+    }
+    did_catch_fade_adjust = false;
   }
 
   if(button_down && (millis() - button_down_pressed) >= BUTTON_HOLD_TIME){
-    int cm = ultrasonic.Ranging(CM);
-    percent_dim = calculateRangePercent(cm);
-    
-    triggerLightStateChange(false);
+    did_catch_fade_adjust = true;
+    int raw_cm = ultrasonic.Ranging(CM);
+
+    /*
+     * First we filter on the raw data with a digital signal which
+     * discards about 30% of high and low values
+     * 
+     * Then we perform a basic smooth on the percent calculated
+     * 
+     * this gives the best response and allows us to reach near full 100%
+     * Eureka!
+     */
+    if(raw_cm != 0){
+      int smoothed_cm = digitalSmooth(raw_cm, ultraSmoothArray);
+      int raw_percent_dim = calculateRangePercent(smoothed_cm);
+      if(raw_percent_dim != 0){
+        smoothed_percent_dim = smooth(raw_percent_dim, filterVal, smoothed_percent_dim);
+        percent_dim = (double)smoothed_percent_dim/100.0;
+      }
+    }
+    //Found from the datasheet on the Ultrasonic device
+    // that the minimum time between pings is 29ms (anything above that
+    //  should be fine, higher values takes longer to filter)
+    delay(29);
+
+    /* digital on both (too much data is being discarded because both
+     *  digitals get rid of 30% each.
+    if(raw_cm != 0){
+      int smoothed_cm = digitalSmooth(raw_cm, ultraSmoothArray);
+      int raw_percent_dim = calculateRangePercent(smoothed_cm);
+      if(raw_percent_dim != 0){
+        int smoothed_percent_dim = digitalSmooth(raw_percent_dim, ultraPercentSmoothArray);
+        percent_dim = (double)smoothed_percent_dim/100.0;
+      }
+    }
+    */
+    /* digital on percent (second best)
+    int raw_percent_dim = calculateRangePercent(raw_cm);
+    if(raw_percent_dim != 0){
+      int smoothed_percent_dim = digitalSmooth(raw_percent_dim, ultraSmoothArray);
+      percent_dim = (double)smoothed_percent_dim/100.0;
+    }
+    */
+    /* Just digital smooth on raw reading (not very good)
+    int smoothed_cm = digitalSmooth(raw_cm, ultraSmoothArray);
+    percent_dim = calculateRangePercent(smoothed_cm);
+    */
+    triggerLightStateChange(false, false);
     
   }
   
 }
 
-double calculateRangePercent(int cm) {
+int calculateRangePercent(int cm) {
   //try to write from range between 10 cm and 25 cm
   // range is 15 cm so thats whats in the percent calculation
   //  subtract the base and devide by total
-  double minimumRange = 10.0;
-  double maximumRange = 45.0;
-  double p = 0.0;
+  int minimumRange = 10;
+  int maximumRange = 45;
+  double p = 0;
   if (cm >= (int)minimumRange && cm <= (int)maximumRange) {
-    p = ((double)cm - minimumRange) / (maximumRange - minimumRange);
+    p = ((double)cm - minimumRange)*100 / (maximumRange - minimumRange);
   }
   return p;
 
 }
 
-void triggerLightStateChange(bool advance) {
+void triggerLightStateChange(bool advance, bool clear_colors) {
   if(advance){
     //advance the sequence
     light_mode_array_index += 1;
@@ -167,25 +232,25 @@ void triggerLightStateChange(bool advance) {
       light_mode_array_index = 0;
     }
   }
-  
-  clearColors();
+
+  if(clear_colors){
+    clearColors();
+  }
   
   double p = percent_dim;
   
   switch (light_mode_array[light_mode_array_index]) {
     case red:
-      analogWritePercent(pin_colorR, p);
+      display_color(color_red);
       break;
     case green:
-      analogWritePercent(pin_colorG, p);
+      display_color(color_green);
       break;
     case blue:
-      analogWritePercent(pin_colorB, p);
+      display_color(color_blue);
       break;
     case white:
-      analogWritePercent(pin_colorR, p);
-      analogWritePercent(pin_colorG, p);
-      analogWritePercent(pin_colorB, p);
+      display_color(color_white);
       break;
     case rainbow:
       makerainbow();
@@ -284,6 +349,68 @@ void random_spaz_anim() {
     delay(20);
   }
 }
+
+int smooth(int data, float filterVal, float smoothedVal){
+
+
+  if (filterVal > 1){      // check to make sure param's are within range
+    filterVal = .99;
+  }
+  else if (filterVal <= 0){
+    filterVal = 0;
+  }
+
+  smoothedVal = (data * (1 - filterVal)) + (smoothedVal  *  filterVal);
+
+  return (int)smoothedVal;
+}
+
+
+
+int digitalSmooth(int rawIn, int *sensSmoothArray){     // "int *sensSmoothArray" passes an array to the function - the asterisk indicates the array name is a pointer
+  int j, k, temp, top, bottom;
+  long total;
+  static int i;
+ // static int raw[filterSamples];
+  static int sorted[filterSamples];
+  boolean done;
+
+  i = (i + 1) % filterSamples;    // increment counter and roll over if necc. -  % (modulo operator) rolls over variable
+  sensSmoothArray[i] = rawIn;                 // input new data into the oldest slot
+
+  // Serial.print("raw = ");
+
+  for (j=0; j<filterSamples; j++){     // transfer data array into anther array for sorting and averaging
+    sorted[j] = sensSmoothArray[j];
+  }
+
+  done = 0;                // flag to know when we're done sorting              
+  while(done != 1){        // simple swap sort, sorts numbers from lowest to highest
+    done = 1;
+    for (j = 0; j < (filterSamples - 1); j++){
+      if (sorted[j] > sorted[j + 1]){     // numbers are out of order - swap
+        temp = sorted[j + 1];
+        sorted [j+1] =  sorted[j] ;
+        sorted [j] = temp;
+        done = 0;
+      }
+    }
+  }
+
+  // throw out top and bottom 15% of samples - limit to throw out at least one from top and bottom
+  bottom = max(((filterSamples * 15)  / 100), 1); 
+  top = min((((filterSamples * 85) / 100) + 1  ), (filterSamples - 1));   // the + 1 is to make up for asymmetry caused by integer rounding
+  k = 0;
+  total = 0;
+  for ( j = bottom; j< top; j++){
+    total += sorted[j];  // total remaining indices
+    k++; 
+  }
+
+  return total / k;    // divide by number of samples
+}
+
+
 
 
 
