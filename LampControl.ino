@@ -62,6 +62,8 @@ int light_mode_array_length = (sizeof(light_mode_array)/sizeof(light_modes));
 // Instantiate a Bounce object
 Bounce debouncer = Bounce(); 
 
+//Ultrasonic device initialization:
+Ultrasonic ultrasonic(pin_ult_trig,pin_ult_echo); //Ultrasonic ultrasonic(Trig,Echo);
 
 
 
@@ -83,6 +85,8 @@ void setup() {
 }
 
 void loop() {
+  /*
+   * For clarity I've commented out the button code so we can focus on the ultrasonic
   //gives a call to the bouncer object to determine state of button
   debouncer.update();
 
@@ -90,7 +94,31 @@ void loop() {
   if(debouncer.fell()){
     triggerLightStateChange();
   }
+  */
   
+  int cm = ultrasonic.Ranging(CM);
+
+  double p = calculateRangePercent(cm);
+  
+  analogWritePercent(pin_colorR, p);
+  analogWritePercent(pin_colorG, p);
+  analogWritePercent(pin_colorB, p);
+  
+  
+}
+
+double calculateRangePercent(int cm){
+  //try to write from range between 10 cm and 25 cm
+  // range is 15 cm so thats whats in the percent calculation
+  //  subtract the base and devide by total
+  double minimumRange = 10.0;
+  double maximumRange = 45.0;
+  double p = 0.0;
+  if(cm >= (int)minimumRange && cm <= (int)maximumRange){
+    p = ((double)cm-minimumRange)/(maximumRange-minimumRange);
+  }
+  return p;
+
 }
 
 void triggerLightStateChange(){
