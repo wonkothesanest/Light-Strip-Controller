@@ -40,13 +40,18 @@ double max_percent = 0.80;
 enum LightModes {
   red,
   green,
-  blue
+  blue,
+  off,
+  white,
+  rainbow,
+  random_spaz,
+  fade
 } light_modes;
 
 //a constant array to declare states of light display
 //  this can be all of the LightModes, or if you want a subset (ie later)
 //  you can just define the ones you want
-int light_mode_array[3] = {red, green, blue};
+int light_mode_array[] = {off, red, green, blue, white, fade, rainbow, random_spaz};
 //initialize the index of the array so we can increment
 int light_mode_array_index = 0;
 //this is a bit more advanced coding but this is how you get the size of
@@ -99,16 +104,32 @@ void triggerLightStateChange(){
   
   clearColors();
 
+  double p = 1.0;
   switch (light_mode_array[light_mode_array_index]){
     case red:
-      analogWritePercent(pin_colorR, 1.0);
+      analogWritePercent(pin_colorR, p);
       break;
     case green:
-      analogWritePercent(pin_colorG, 1.0);
+      analogWritePercent(pin_colorG, p);
       break;
     case blue:
-      analogWritePercent(pin_colorB, 1.0);
+      analogWritePercent(pin_colorB, p);
       break;
+    case white:
+      analogWritePercent(pin_colorR, p);
+      analogWritePercent(pin_colorG, p);
+      analogWritePercent(pin_colorB, p);
+      break;
+    case rainbow:
+      makerainbow();
+      break; 
+    case random_spaz:
+      random_spaz_anim();
+      break;
+    case fade:
+      fadeAnim();
+      break;
+         
   }
 
 }
@@ -130,7 +151,48 @@ void clearColors(){
  
 }
 
+void fadeAnim(){
+  for(int i = 0; i < 256; i ++){
+    analogWritePercent(pin_colorR, (double)i/256.0);
+    analogWritePercent(pin_colorG, (double)i/256.0);
+    analogWritePercent(pin_colorB, (double)i/256.0);
+    delay(20);
+  }
+}
 
+void makerainbow(){
+  for(int i = 0; i < 256; i++){
+    int r = i;
+    int g = i + 70;
+    int b = g + 70;
+    if(g >= 256){
+      g = g - 256;
+    }
+    if(b >= 256){
+      b = b - 256;
+    }
+    
+    analogWritePercent(pin_colorR, (double)r/256.0);
+    analogWritePercent(pin_colorG, (double)b/256.0);
+    analogWritePercent(pin_colorB, (double)g/256.0);
+    delay(20);
+    
+  }
+}
+
+
+void random_spaz_anim(){
+  for(int i = 0; i < 256; i++){
+    int r = random(255);
+    int b = random(255);
+    int g = random(255);
+    
+    analogWritePercent(pin_colorR, (double)r/256.0);
+    analogWritePercent(pin_colorG, (double)b/256.0);
+    analogWritePercent(pin_colorB, (double)g/256.0);
+    delay(20);
+  }
+}
 
 
 
